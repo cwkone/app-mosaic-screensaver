@@ -5,6 +5,8 @@ struct InstalledApp: Equatable {
     let id: String
     let name: String
     let url: URL
+    var modifiedAt: Date? = nil
+    var artworkIdentity: String { "\(url.path)|\(modifiedAt?.timeIntervalSince1970 ?? 0)" }
 }
 
 enum AppCatalog {
@@ -25,7 +27,8 @@ enum AppCatalog {
             let name = (bundle.localizedInfoDictionary?["CFBundleDisplayName"] as? String) ??
                 (info["CFBundleDisplayName"] as? String) ??
                 url.deletingPathExtension().lastPathComponent
-            found[id] = InstalledApp(id: id, name: name, url: url)
+            let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            found[id] = InstalledApp(id: id, name: name, url: url, modifiedAt: modified)
         }
         // App collections can contain SDKs with millions of source/resource
         // files (for example Unreal Engine). Only walk directories where an
@@ -97,7 +100,7 @@ final class SharedAppCatalog {
             let url = URL(fileURLWithPath: path)
             guard url.pathExtension.lowercased() == "app" else { return nil }
             seen.insert(id)
-            return InstalledApp(id: id, name: name, url: url)
+            return InstalledApp(id: id, name: name, url: url, modifiedAt: record["modifiedAt"].flatMap(Double.init).map(Date.init(timeIntervalSince1970:)))
         }
         if let date = snapshotStore.object(forKey: "scannedAt") as? Date { scannedAt = date }
     }
@@ -109,13 +112,16 @@ final class SharedAppCatalog {
         waiting.append((needsInitial, completion))
         guard !scanning else { return }
         scanning = true
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .utility).async {
             let apps = AppCatalog.discover()
             DispatchQueue.main.async {
                 let result = apps.isEmpty && !self.cached.isEmpty ? self.cached : apps
                 let changed = result != self.cached
                 self.cached = result; self.scannedAt = Date(); self.scanning = false
-                self.snapshotStore.set(result.map { ["id": $0.id, "name": $0.name, "path": $0.url.path] }, forKey: "apps")
+                if changed {
+                    self.snapshotStore.set(result.map { ["id": $0.id, "name": $0.name, "path": $0.url.path,
+                        "modifiedAt": String($0.modifiedAt?.timeIntervalSince1970 ?? 0)] }, forKey: "apps")
+                }
                 self.snapshotStore.set(self.scannedAt, forKey: "scannedAt")
                 self.snapshotStore.synchronize()
                 let callbacks = self.waiting; self.waiting.removeAll()
