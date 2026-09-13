@@ -20,6 +20,10 @@ Build output, ZIPs, local backups, and QA output are generated locally and are n
 
 The preview app and screensaver file share the App Mosaic icon. Artwork and thumbnail assets live in `Resources/`; the original generated icon and its prompt are in `Resources/Artwork/`. The build and installer apply the screensaver's native Finder icon after signing and preserve that metadata in the ZIP.
 
+## License
+
+The source code, tests, and build scripts are available under the [MIT License](LICENSE). Artwork, screenshots, icons, thumbnails, generated images, video, logos, the App Mosaic name, and third-party trademarks or assets are not covered by that license and remain subject to their respective rights.
+
 **System Settings thumbnail remains unresolved.** The bundle includes PNG and TIFF thumbnail assets, but System Settings still displayed the generic galaxy image in the latest observed installation. Other third-party savers on the same Mac display custom thumbnails. Installation, registration, and thumbnail caching need further investigation; the presence of the bundled assets does not establish that the library thumbnail works.
 
 ## Options
