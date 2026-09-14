@@ -19,9 +19,11 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
     private let search = NSSearchField()
     private let selectionSummary = NSTextField(labelWithString: "")
     private let cache = IconCache()
-    private var filtered: [InstalledApp] {
+    private var filtered: [InstalledApp] = []
+    private var summaryExclusions: Set<String>?
+    private func refilter() {
         let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        return query.isEmpty ? apps : apps.filter { $0.name.localizedCaseInsensitiveContains(query) }
+        filtered = query.isEmpty ? apps : apps.filter { $0.name.localizedCaseInsensitiveContains(query) }
     }
 
     init(settings: MosaicSettings, apps: [InstalledApp], onSave: @escaping (MosaicSettings) -> Void) {
@@ -32,6 +34,7 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
         window.title = "App Mosaic Options"
         window.isReleasedWhenClosed = false
         build()
+        refilter()
         refresh()
     }
     private func label(_ text: String, frame: NSRect, size: CGFloat = 13, color: NSColor = .labelColor) -> NSTextField {
@@ -154,7 +157,9 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
         let tinting = draft.colorMode == .tinted
         tintColor.isEnabled = tinting; sliders["tintStrength"]?.isEnabled = tinting
         values["tintStrength"]?.textColor = tinting ? .secondaryLabelColor : .disabledControlTextColor
-        let selected = apps.filter { !draft.excludedApps.contains($0.id) }.count
+        guard summaryExclusions != draft.excludedApps else { return }
+        summaryExclusions = draft.excludedApps
+        let selected = apps.lazy.filter { !self.draft.excludedApps.contains($0.id) }.count
         appSummary.stringValue = apps.isEmpty ? "No apps found in standard Applications folders." : "\(selected) of \(apps.count) apps included"
         selectionSummary.stringValue = "\(selected) included · New apps are included automatically"
     }
@@ -165,11 +170,11 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
         if let parent = window.sheetParent { parent.endSheet(window, returnCode: result) }
         else { window.orderOut(nil) }
     }
-    func updateApps(_ apps: [InstalledApp]) { self.apps = apps; table.reloadData(); updateValues() }
+    func updateApps(_ apps: [InstalledApp]) { self.apps = apps; summaryExclusions = nil; refilter(); table.reloadData(); updateValues() }
 
     @objc func showChooser() {
         if chooser == nil { buildChooser() }
-        search.stringValue = ""; table.reloadData(); updateValues()
+        search.stringValue = ""; refilter(); table.reloadData(); updateValues()
         if let chooser { window.beginSheet(chooser) }
     }
     private func buildChooser() {
@@ -224,5 +229,5 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
         if sender.state == .on { draft.excludedApps.remove(id) } else { draft.excludedApps.insert(id) }
         updateValues()
     }
-    func controlTextDidChange(_ obj: Notification) { table.reloadData() }
+    func controlTextDidChange(_ obj: Notification) { refilter(); table.reloadData() }
 }

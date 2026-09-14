@@ -8,6 +8,8 @@ xcrun swiftc -swift-version 5 -O Sources/Model.swift Sources/Catalog.swift Sourc
 ./build/ArtworkTests
 xcrun swiftc -swift-version 5 -O Sources/Catalog.swift Tests/CatalogTests.swift -framework AppKit -o build/CatalogTests
 ./build/CatalogTests
+xcrun swiftc -swift-version 5 -O Sources/Model.swift Sources/Catalog.swift Sources/Artwork.swift Sources/Renderer.swift Tests/RendererTests.swift -framework AppKit -framework QuartzCore -o build/RendererTests
+./build/RendererTests
 xcrun swiftc -swift-version 5 -parse-as-library Tests/BundleSmoke.swift -framework AppKit -framework ScreenSaver -o build/BundleSmoke
 ./build/BundleSmoke "$HOME/Library/Application Support/App Mosaic/Builds/App Mosaic.saver"
 "$HOME/Library/Application Support/App Mosaic/Builds/App Mosaic Preview.app/Contents/MacOS/AppMosaicPreview" --verify

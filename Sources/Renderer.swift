@@ -2,26 +2,31 @@ import AppKit
 import QuartzCore
 
 private final class MosaicCell {
-    let layer = CALayer()
-    var current = CALayer()
-    var incoming = CALayer()
+    var current: CALayer
+    var incoming: CALayer?
     init(size: Double, position: CGPoint, scale: Double) {
-        layer.bounds = CGRect(x: 0, y: 0, width: size, height: size)
-        layer.position = position
-        for image in [current, incoming] {
-            image.frame = layer.bounds
-            image.contentsGravity = .resizeAspect
-            image.contentsScale = scale
-            image.minificationFilter = .trilinear
-            layer.addSublayer(image)
-        }
-        incoming.opacity = 0
+        current = CALayer()
+        current.bounds = CGRect(x: 0, y: 0, width: size, height: size)
+        current.position = position
+        current.contentsGravity = .resizeAspect
+        current.contentsScale = scale
+        current.minificationFilter = .trilinear
+    }
+    func prepareIncoming() -> CALayer {
+        let image = CALayer()
+        image.bounds = current.bounds; image.position = current.position
+        image.contentsGravity = current.contentsGravity
+        image.contentsScale = current.contentsScale
+        image.minificationFilter = current.minificationFilter
+        current.superlayer?.insertSublayer(image, above: current)
+        incoming = image
+        return image
     }
     func finish() {
-        current.removeAllAnimations(); incoming.removeAllAnimations()
-        current.contents = nil; current.opacity = 0
-        incoming.opacity = 1
-        swap(&current, &incoming)
+        guard let incoming else { return }
+        current.removeFromSuperlayer(); current.contents = nil
+        incoming.removeAllAnimations(); incoming.opacity = 1
+        current = incoming; self.incoming = nil
     }
 }
 
@@ -31,6 +36,16 @@ final class MosaicRenderer {
     private let viewport = CALayer()
     private let emptyLabel = CATextLayer()
     private var cells: [MosaicCell] = []
+    private struct Configuration: Equatable {
+        let settings: MosaicSettings
+        let apps: [InstalledApp]
+        let size: CGSize
+        let scale: Double
+        let backingScale: Double
+        let emptyMessage: String?
+    }
+    private var configuration: Configuration?
+    private var motionGroups: [(layer: CALayer, value: Double)] = []
     private var layout: MosaicLayout?
     private var playback: MosaicPlayback?
     private var apps: [String: InstalledApp] = [:]
@@ -67,6 +82,10 @@ final class MosaicRenderer {
     }
     func configure(settings: MosaicSettings, apps: [InstalledApp], size: CGSize,
                    scale: Double, backingScale: Double, emptyMessage: String?) {
+        let next = Configuration(settings: settings, apps: apps, size: size, scale: scale,
+                                 backingScale: backingScale, emptyMessage: apps.isEmpty ? emptyMessage : nil)
+        guard configuration != next else { return }
+        configuration = next
         generation += 1; rebuildCount += 1
         token.cancel(); token = MosaicWorkToken()
         timer?.invalidate(); timer = nil
@@ -79,38 +98,68 @@ final class MosaicRenderer {
         withoutActions {
             root.bounds = CGRect(origin: .zero, size: size)
             viewport.frame = CGRect(x: geometry.margin, y: geometry.margin, width: geometry.width, height: geometry.height)
-            viewport.sublayers = nil; cells.removeAll()
+            viewport.sublayers = nil; cells.removeAll(); motionGroups.removeAll()
             emptyLabel.contentsScale = backingScale
             emptyLabel.frame = CGRect(x: 8, y: max(0, size.height / 2 - 12), width: max(0, size.width - 16), height: 25)
             emptyLabel.string = apps.isEmpty ? emptyMessage : nil
+            let horizontal = settings.movement == .left || settings.movement == .right
+            let moving = settings.movement != .stationary
+            if moving, !(playback?.slots.isEmpty ?? true) {
+                for index in 0..<(horizontal ? geometry.columns : geometry.rows) {
+                    let point = geometry.position(horizontal ? index : index * geometry.columns)
+                    let group = CALayer()
+                    group.anchorPoint = .zero
+                    group.position = horizontal ? CGPoint(x: point.x, y: 0) : CGPoint(x: 0, y: point.y)
+                    viewport.addSublayer(group)
+                    motionGroups.append((group, horizontal ? point.x : point.y))
+                }
+            }
             for index in 0..<(playback?.slots.count ?? 0) {
                 let point = geometry.position(index)
-                let cell = MosaicCell(size: geometry.iconSize, position: CGPoint(x: point.x, y: point.y), scale: backingScale)
+                let position = moving ? (horizontal ? CGPoint(x: 0, y: point.y) : CGPoint(x: point.x, y: 0)) : CGPoint(x: point.x, y: point.y)
+                let cell = MosaicCell(size: geometry.iconSize, position: position, scale: backingScale)
                 cell.current.opacity = 0
-                viewport.addSublayer(cell.layer); cells.append(cell)
+                let parent = moving ? motionGroups[horizontal ? index % geometry.columns : index / geometry.columns].layer : viewport
+                parent.addSublayer(cell.current); cells.append(cell)
             }
             addEdgeFade(geometry)
         }
         if active { addMotion() }
         let build = generation
-        for (index, slot) in (playback?.slots ?? []).enumerated() {
-            load(slot.app) { [weak self] image in
-                guard let self, self.generation == build, self.cells.indices.contains(index) else { return }
-                self.withoutActions {
-                    self.cells[index].current.contents = image
-                    self.cells[index].current.opacity = 1
+        var assignments: [(Int, CGImage?)] = []
+        var flushPending = false
+        let slots = playback?.slots ?? []
+        // Repeated icons share a request and each run-loop batch commits once.
+        let indices = Dictionary(grouping: slots.indices, by: { slots[$0].app })
+        for (app, positions) in indices {
+            load(app) { [weak self] image in
+                guard let self, self.generation == build else { return }
+                assignments.append(contentsOf: positions.map { ($0, image) })
+                guard !flushPending else { return }
+                flushPending = true
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.generation == build else { return }
+                    self.withoutActions {
+                        for (index, image) in assignments {
+                            self.cells[index].current.contents = image
+                            self.cells[index].current.opacity = 1
+                        }
+                    }
+                    self.ready += assignments.count
+                    assignments.removeAll(keepingCapacity: true); flushPending = false
+                    if self.ready == self.cells.count { self.beginScheduling() }
                 }
-                self.ready += 1
-                if self.ready == self.cells.count { self.beginScheduling() }
             }
         }
     }
+
     private func load(_ id: String, completion: @escaping (CGImage?) -> Void) {
         guard let app = apps[id], let layout else { completion(nil); return }
         MosaicArtworkCache.shared.request(app: app, pixels: Int(ceil(layout.iconSize * backingScale)),
             settings: settings, token: token, completion: completion)
     }
     func resume() {
+        guard !active else { return }
         active = true
         addMotion()
         if ready == cells.count { beginScheduling() }
@@ -119,8 +168,8 @@ final class MosaicRenderer {
         active = false; generation += 1
         timer?.invalidate(); timer = nil
         token.cancel(); endings.removeAll()
-        withoutActions { viewport.sublayers = nil; cells.removeAll(); emptyLabel.string = nil }
-        playback = nil; ready = 0
+        withoutActions { viewport.sublayers = nil; cells.removeAll(); motionGroups.removeAll(); emptyLabel.string = nil }
+        playback = nil; layout = nil; configuration = nil; apps.removeAll(); ready = 0
     }
     private func addMotion() {
         guard let layout, settings.movement != .stationary else { return }
@@ -132,18 +181,16 @@ final class MosaicRenderer {
         let high = low + span
         let duration = span / layout.pitch * settings.secondsPerCell
         let begin = CACurrentMediaTime()
-        for (index, cell) in cells.enumerated() {
-            let point = layout.position(index)
-            let value = horizontal ? point.x : point.y
+        for (layer, value) in motionGroups {
             let animation = CABasicAnimation(keyPath: horizontal ? "position.x" : "position.y")
             animation.fromValue = increasing ? low : high
             animation.toValue = increasing ? high : low
             animation.duration = duration
-            animation.beginTime = cell.layer.convertTime(begin, from: nil)
+            animation.beginTime = layer.convertTime(begin, from: nil)
             animation.timeOffset = (increasing ? value - low : high - value) / span * duration
             animation.repeatCount = .infinity
             animation.timingFunction = CAMediaTimingFunction(name: .linear)
-            cell.layer.add(animation, forKey: "drift")
+            layer.add(animation, forKey: "drift")
         }
     }
     private func beginScheduling() {
@@ -190,8 +237,10 @@ final class MosaicRenderer {
         let cell = cells[index]
         let duration = settings.fadeDuration
         let begin = CACurrentMediaTime()
+        var incomingLayer: CALayer!
         withoutActions {
-            cell.incoming.contents = image; cell.incoming.opacity = 1
+            incomingLayer = cell.prepareIncoming()
+            incomingLayer.contents = image; incomingLayer.opacity = 1
             cell.current.opacity = 0
         }
         let outgoing = CABasicAnimation(keyPath: "opacity")
@@ -201,9 +250,9 @@ final class MosaicRenderer {
         cell.current.add(outgoing, forKey: "fadeOut")
         let incoming = CAKeyframeAnimation(keyPath: "opacity")
         incoming.values = [0, 0, 1]; incoming.keyTimes = [0, 0.5, 1]
-        incoming.duration = duration * 2; incoming.beginTime = cell.incoming.convertTime(begin, from: nil)
+        incoming.duration = duration * 2; incoming.beginTime = incomingLayer.convertTime(begin, from: nil)
         incoming.timingFunctions = [CAMediaTimingFunction(name: .linear), CAMediaTimingFunction(name: .easeInEaseOut)]
-        cell.incoming.add(incoming, forKey: "fadeIn")
+        incomingLayer.add(incoming, forKey: "fadeIn")
         endings[index] = (app, begin + duration * 2)
         schedule()
     }
