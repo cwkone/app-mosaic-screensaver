@@ -6,6 +6,22 @@ import ScreenSaver
         _ = NSApplication.shared
         let url = URL(fileURLWithPath: CommandLine.arguments[1])
         let bundle = Bundle(url: url)!
+        let expectedThumbnails = [
+            ("thumbnail.png", 90, 58),
+            ("thumbnail@2x.png", 180, 116),
+            ("thumbnail@4x.png", 360, 232),
+            ("thumbnail.tiff", 90, 58),
+        ]
+        guard let resources = bundle.resourceURL else { fatalError("Saver has no resource directory") }
+        for (name, width, height) in expectedThumbnails {
+            let thumbnailURL = resources.appendingPathComponent(name)
+            guard let data = try? Data(contentsOf: thumbnailURL),
+                  let thumbnail = NSBitmapImageRep(data: data) else {
+                fatalError("Cannot load bundled \(name)")
+            }
+            precondition(thumbnail.pixelsWide == width && thumbnail.pixelsHigh == height,
+                         "Unexpected \(name) dimensions")
+        }
         try bundle.loadAndReturnError()
         guard let viewClass = bundle.principalClass as? ScreenSaverView.Type,
               let view = viewClass.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400), isPreview: true) else {
@@ -41,6 +57,6 @@ import ScreenSaver
         RunLoop.main.run(until: Date().addingTimeInterval(0.25))
         precondition((view.value(forKey: "renderingDiagnostics") as! NSDictionary)["cells"] as! Int > 0)
         view.stopAnimation()
-        print("PASS: load actual .saver, instantiate principal class, discover, artwork ready, no frame rendering, configure sheet, stop/resize cleanup, restart")
+        print("PASS: load actual .saver and thumbnail representations, instantiate principal class, discover, artwork ready, no frame rendering, configure sheet, stop/resize cleanup, restart")
     }
 }
