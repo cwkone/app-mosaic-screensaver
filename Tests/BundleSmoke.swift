@@ -41,6 +41,19 @@ import ScreenSaver
         RunLoop.main.run(until: Date().addingTimeInterval(0.25))
         precondition((view.value(forKey: "renderingDiagnostics") as! NSDictionary)["cells"] as! Int > 0)
         view.stopAnimation()
-        print("PASS: load actual .saver, instantiate principal class, discover, artwork ready, no frame rendering, configure sheet, stop/resize cleanup, restart")
+        if CommandLine.arguments.count > 2 {
+            let app = URL(fileURLWithPath: CommandLine.arguments[2])
+            let extensionURL = app.appendingPathComponent("Contents/Extensions/App Mosaic Focus Intents.appex")
+            let extensionBundle = Bundle(url: extensionURL)!
+            precondition(extensionBundle.bundleIdentifier == "one.cwk.AppMosaic.Preview.FocusIntents")
+            precondition(extensionBundle.object(forInfoDictionaryKey: "CFBundlePackageType") as? String == "XPC!")
+            let metadata = extensionURL.appendingPathComponent("Contents/Resources/Metadata.appintents/extract.actionsdata")
+            let metadataData = try Data(contentsOf: metadata)
+            let metadataText = String(decoding: metadataData, as: UTF8.self)
+            precondition(metadataText.contains("SetMosaicPresetFocusFilter"))
+            precondition(metadataText.contains("com.apple.link.systemProtocol.FocusConfiguration"))
+            precondition(metadataText.contains("MosaicPresetEntityQuery"))
+        }
+        print("PASS: load actual .saver, instantiate principal class, discover, artwork ready, no frame rendering, configure sheet, stop/resize cleanup, restart, embedded Focus intent metadata")
     }
 }

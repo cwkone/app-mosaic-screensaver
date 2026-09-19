@@ -1,15 +1,15 @@
 import Foundation
 
-struct MosaicSettings: Equatable {
-    enum Movement: Int, CaseIterable {
+struct MosaicSettings: Codable, Equatable {
+    enum Movement: Int, CaseIterable, Codable {
         case stationary, left, right, up, down
         var title: String { ["Stationary", "Left", "Right", "Up", "Down"][rawValue] }
     }
-    enum ScreenEdges: Int, CaseIterable {
+    enum ScreenEdges: Int, CaseIterable, Codable {
         case fill, wholeIcons
         var title: String { ["Fill the screen", "Keep whole icons"][rawValue] }
     }
-    enum ColorMode: Int, CaseIterable {
+    enum ColorMode: Int, CaseIterable, Codable {
         case original, monochrome, tinted
         var title: String { ["Original", "Monochrome", "Tinted"][rawValue] }
     }

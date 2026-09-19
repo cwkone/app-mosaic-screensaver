@@ -35,6 +35,67 @@ import Foundation
         endpoints.frequency = 1; endpoints.scrollSpeed = 1
         precondition(abs(endpoints.changeInterval - 0.25) < 0.0001 && abs(endpoints.secondsPerCell - 8) < 0.0001)
 
+        store.removeObject(forKey: MosaicPresetLibrary.storageKey)
+        let bootstrappedLibrary = MosaicPresetLibrary.load(from: store, fallback: settings)
+        precondition(MosaicPresetLibrary.load(from: store, fallback: .defaults) == bootstrappedLibrary)
+        precondition(bootstrappedLibrary.presets[0].settings == settings)
+        var library = MosaicPresetLibrary.initial(settings: settings)
+        library.save(to: store)
+        precondition(MosaicPresetLibrary.load(from: store, fallback: .defaults) == library)
+        let defaultGroup = library.groups[0]
+        precondition(defaultGroup.rule == .allExcept && defaultGroup.appIDs == ["a", "b"])
+        let appIDs: Set<String> = ["a", "b", "c", "d"]
+        precondition(library.resolvedSettings(in: store, appIDs: appIDs).excludedApps == ["a", "b"])
+        let workGroup = MosaicAppGroup(id: "work", name: "Work", rule: .only, appIDs: ["a", "c"])
+        library.groups.append(workGroup)
+        var workSettings = MosaicSettings.defaults; workSettings.iconSize = 72; workSettings.movement = .left
+        let workPreset = MosaicPreset(id: "work-preset", name: "Work", settings: workSettings, appGroupID: workGroup.id)
+        library.presets.append(workPreset); library.selectedPresetID = workPreset.id; library.save(to: store)
+        let resolvedWork = library.resolvedSettings(in: store, appIDs: appIDs)
+        precondition(resolvedWork.iconSize == 72 && resolvedWork.movement == .left)
+        precondition(resolvedWork.excludedApps == ["b", "d"])
+        MosaicPresetLibrary.setFocusPreset(library.presets[0].id, in: store)
+        precondition(library.activePresetID(in: store) == library.presets[0].id)
+        MosaicPresetLibrary.setFocusPreset(nil, in: store)
+        precondition(library.activePresetID(in: store) == workPreset.id)
+
+        var clockTint = MosaicTintSchedule()
+        clockTint.mode = .timeOfDay; clockTint.dayStartMinutes = 7 * 60; clockTint.nightStartMinutes = 19 * 60
+        clockTint.transitionMinutes = 60
+        clockTint.dayColor = MosaicRGB(red: 1, green: 0, blue: 0)
+        clockTint.nightColor = MosaicRGB(red: 0, green: 0, blue: 1)
+        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(secondsFromGMT: 0)!
+        func time(_ hour: Int, _ minute: Int = 0) -> Date {
+            utc.date(from: DateComponents(year: 2026, month: 9, day: 18, hour: hour, minute: minute))!
+        }
+        precondition(clockTint.nightAmount(at: time(12), calendar: utc) == 0)
+        precondition(clockTint.nightAmount(at: time(0), calendar: utc) == 1)
+        precondition(abs(clockTint.nightAmount(at: time(7), calendar: utc)! - 0.5) < 0.0001)
+        precondition(abs(clockTint.nightAmount(at: time(19), calendar: utc)! - 0.5) < 0.0001)
+        let dayTint = clockTint.applying(to: .defaults, at: time(12), calendar: utc)
+        precondition(dayTint.colorMode == .tinted && dayTint.tintRed == 1 && dayTint.tintBlue == 0)
+        let nightTint = clockTint.applying(to: .defaults, at: time(0), calendar: utc)
+        precondition(nightTint.tintRed == 0 && nightTint.tintBlue == 1)
+
+        let dallas = MosaicSolarTimes.calculate(for: time(12), latitude: 32.7767, longitude: -96.7970, calendar: utc)!
+        let sunriseHour = utc.component(.hour, from: dallas.sunrise)
+        let sunsetHour = utc.component(.hour, from: dallas.sunset)
+        precondition((11...13).contains(sunriseHour))
+        precondition((0...2).contains(sunsetHour))
+        precondition(dallas.sunrise < dallas.sunset)
+        var solarTint = clockTint
+        solarTint.mode = .sunriseSunset; solarTint.latitude = 32.7767; solarTint.longitude = -96.7970
+        precondition(solarTint.nightAmount(at: dallas.sunrise, calendar: utc)! > 0.49)
+        precondition(solarTint.nightAmount(at: dallas.sunrise, calendar: utc)! < 0.51)
+        solarTint.latitude = nil
+        precondition(solarTint.applying(to: settings, at: time(12), calendar: utc) == settings)
+        var tokyo = Calendar(identifier: .gregorian); tokyo.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let tokyoNoon = tokyo.date(from: DateComponents(year: 2026, month: 9, day: 18, hour: 12))!
+        let tokyoSolar = MosaicSolarTimes.calculate(for: tokyoNoon, latitude: 35.6764, longitude: 139.6500, calendar: tokyo)!
+        precondition((4...6).contains(tokyo.component(.hour, from: tokyoSolar.sunrise)))
+        precondition((17...19).contains(tokyo.component(.hour, from: tokyoSolar.sunset)))
+        precondition(tokyoSolar.sunrise < tokyoNoon && tokyoNoon < tokyoSolar.sunset)
+
         let defaultGrid = MosaicLayout(settings: .defaults, width: 1920, height: 1080)
         precondition(abs(defaultGrid.pitch / defaultGrid.iconSize - 1.08) < 0.0001)
         precondition(defaultGrid.margin == 0)
@@ -97,6 +158,6 @@ import Foundation
             }
             precondition(count == 0 ? playback.slots.isEmpty : playback.slots.count == 80)
         }
-        print("PASS: new defaults, persistence, v1 timing/exclusion migration, bounds, pacing endpoints, tight gaps, edge coverage, all scroll wraps, margins, shuffle coverage, duplicate avoidance, empty/small collections")
+        print("PASS: settings and preset persistence, app groups, Focus override, clock/solar tinting, migration, bounds, pacing, wrapping, margins, shuffle coverage, duplicate avoidance, empty/small collections")
     }
 }
