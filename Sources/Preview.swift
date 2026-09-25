@@ -125,12 +125,12 @@ final class PreviewDelegate: NSObject, NSApplicationDelegate {
         appearance.colorMode = .monochrome
         saver.preview(appearance); awaitArtwork(); snapshot(saver, name: "grid-monochrome")
         saver.preview(.defaults); awaitArtwork()
-        var saved: MosaicSettings?
-        let controller = MosaicOptionsController(settings: .defaults, apps: apps) { saved = $0 }
+        var savedLibrary: MosaicPresetLibrary?
+        let controller = MosaicOptionsController(library: .initial(settings: .defaults), apps: apps) { savedLibrary = $0 }
         window.beginSheet(controller.window)
         snapshot(controller.window.contentView!, name: "options")
         let tabs = controller.window.contentView!.subviews.compactMap { $0 as? NSTabView }.first!
-        verifyCheck(tabs.numberOfTabViewItems == 3)
+        verifyCheck(tabs.numberOfTabViewItems == 4)
         func controls<T: NSView>(_ type: T.Type) -> [T] {
             tabs.tabViewItems.flatMap { $0.view?.subviews.compactMap { $0 as? T } ?? [] }
         }
@@ -146,6 +146,26 @@ final class PreviewDelegate: NSObject, NSApplicationDelegate {
         verifyCheck(controller.draft.colorMode == .tinted && controls(NSColorWell.self).first!.isEnabled)
         tabs.selectTabViewItem(at: 1); snapshot(controller.window.contentView!, name: "options-animation")
         tabs.selectTabViewItem(at: 2); snapshot(controller.window.contentView!, name: "options-appearance")
+        tabs.selectTabViewItem(at: 3); snapshot(controller.window.contentView!, name: "options-presets")
+        let initialPresetID = controller.draftLibrary.selectedPresetID
+        controller.createPreset(named: "Work")
+        verifyCheck(controller.draftLibrary.presets.count == 2)
+        verifyCheck(controller.draftLibrary.selectedPresetID != initialPresetID)
+        verifyCheck(controller.draftLibrary.presets.last?.name == "Work")
+        controller.createPreset(named: "Work")
+        verifyCheck(controller.draftLibrary.presets.last?.name == "Work 2")
+        controller.createGroup(named: "Essentials")
+        verifyCheck(controller.draftLibrary.groups.count == 2)
+        verifyCheck(controller.draftLibrary.groups.last?.name == "Essentials")
+        verifyCheck(controller.draftLibrary.presets.last?.appGroupID == controller.draftLibrary.groups.last?.id)
+        let presetView = tabs.tabViewItems[3].view!
+        let scheduleButton = presetView.subviews.compactMap { $0 as? NSButton }.first { $0.title == "Schedule & Location…" }!
+        scheduleButton.performClick(nil)
+        if let schedule = controller.window.attachedSheet {
+            snapshot(schedule.contentView!, name: "tint-schedule")
+            let cancel = schedule.contentView!.subviews.compactMap { $0 as? NSButton }.first { $0.title == "Cancel" }!
+            cancel.performClick(nil)
+        } else { fatalError("Tint schedule sheet did not open") }
         controller.excludeAll()
         verifyCheck(controller.draft.excludedApps.count == apps.count)
         controller.includeAll()
@@ -172,7 +192,8 @@ final class PreviewDelegate: NSObject, NSApplicationDelegate {
             controller.closeChooser()
         } else { fatalError("Choose Apps sheet did not open") }
         controller.save()
-        verifyCheck(saved == .defaults)
+        verifyCheck(savedLibrary?.presets.count == 3)
+        verifyCheck(savedLibrary?.groups.count == 2)
         var cancelledSaved = false
         let cancelled = MosaicOptionsController(settings: .defaults, apps: apps) { _ in cancelledSaved = true }
         window.beginSheet(cancelled.window)
@@ -182,7 +203,7 @@ final class PreviewDelegate: NSObject, NSApplicationDelegate {
         saver.stopAnimation()
         verifyCheck((saver.renderingDiagnostics["cells"] as! Int) == 0)
         verifyCheck((saver.renderingDiagnostics["running"] as! Bool) == false)
-        print("PASS: preview, discovery (\(apps.count) apps), options, choose apps, include/exclude all, restore defaults, search, individual checkboxes, new layout/color controls, no per-frame rendering, stop cleanup, cancel, save callback, appearance snapshots")
+        print("PASS: preview, discovery (\(apps.count) apps), presets, app groups, tint schedule, options, choose apps, include/exclude all, restore defaults, search, individual checkboxes, layout/color controls, no per-frame rendering, stop cleanup, cancel, save callback, appearance snapshots")
         NSApp.terminate(nil)
     }
 }

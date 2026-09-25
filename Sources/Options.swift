@@ -2,15 +2,23 @@ import AppKit
 
 final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     let window: NSWindow
+    private(set) var draftLibrary: MosaicPresetLibrary
     private(set) var draft: MosaicSettings
     private var apps: [InstalledApp]
-    private let onSave: (MosaicSettings) -> Void
+    private let onSave: (MosaicPresetLibrary) -> Void
     private var sliders: [String: NSSlider] = [:]
     private var values: [String: NSTextField] = [:]
     private let movement = NSPopUpButton()
     private let screenEdges = NSPopUpButton()
     private let colorMode = NSPopUpButton()
     private let tintColor = NSColorWell()
+    private let presetPopup = NSPopUpButton()
+    private let groupPopup = NSPopUpButton()
+    private let tintSchedulePopup = NSPopUpButton()
+    private let dayTintColor = NSColorWell()
+    private let nightTintColor = NSColorWell()
+    private let scheduleSummary = NSTextField(labelWithString: "")
+    private var scheduleController: MosaicScheduleController?
     private var formContainer: NSView?
     private let tabs = NSTabView()
     private let appSummary = NSTextField(labelWithString: "")
@@ -26,8 +34,18 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
         filtered = query.isEmpty ? apps : apps.filter { $0.name.localizedCaseInsensitiveContains(query) }
     }
 
-    init(settings: MosaicSettings, apps: [InstalledApp], onSave: @escaping (MosaicSettings) -> Void) {
-        self.draft = settings; self.apps = apps; self.onSave = onSave
+    init(library: MosaicPresetLibrary, apps: [InstalledApp], onSave: @escaping (MosaicPresetLibrary) -> Void) {
+        var library = library
+        library.normalize()
+        self.draftLibrary = library
+        self.apps = apps
+        self.onSave = onSave
+        let preset = library.presets.first(where: { $0.id == library.selectedPresetID }) ?? library.presets[0]
+        var settings = preset.settings
+        if let group = library.groups.first(where: { $0.id == preset.appGroupID }) {
+            settings.excludedApps = group.excludedApps(from: Set(apps.map(\.id)))
+        }
+        self.draft = settings
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 610),
                           styleMask: [.titled], backing: .buffered, defer: false)
         super.init()
@@ -36,6 +54,17 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
         build()
         refilter()
         refresh()
+    }
+
+    convenience init(settings: MosaicSettings, apps: [InstalledApp], onSave: @escaping (MosaicSettings) -> Void) {
+        self.init(library: MosaicPresetLibrary.initial(settings: settings), apps: apps) { library in
+            let preset = library.presets.first(where: { $0.id == library.selectedPresetID }) ?? library.presets[0]
+            var result = preset.settings
+            if let group = library.groups.first(where: { $0.id == preset.appGroupID }) {
+                result.excludedApps = group.excludedApps(from: Set(apps.map(\.id)))
+            }
+            onSave(result)
+        }
     }
     private func label(_ text: String, frame: NSRect, size: CGFloat = 13, color: NSColor = .labelColor) -> NSTextField {
         let label = NSTextField(labelWithString: text)
@@ -84,6 +113,43 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
         formContainer?.addSubview(tintColor)
         addSlider("tintStrength", title: "Tint strength", y: 85, range: 0...1, low: "Original colors", high: "Full tint")
         _ = label("Tinting preserves the details and shape of each app icon.", frame: NSRect(x: 20, y: 24, width: 530, height: 22), size: 11, color: .secondaryLabelColor)
+        pane("Presets")
+        _ = label("Preset", frame: NSRect(x: 20, y: 286, width: 100, height: 22))
+        presetPopup.frame = NSRect(x: 122, y: 280, width: 210, height: 28)
+        presetPopup.target = self; presetPopup.action = #selector(selectPreset)
+        formContainer?.addSubview(presetPopup)
+        addCompactButton("New", x: 338, y: 280, width: 58, action: #selector(newPreset))
+        addCompactButton("Rename", x: 398, y: 280, width: 72, action: #selector(renamePreset))
+        addCompactButton("Delete", x: 472, y: 280, width: 68, action: #selector(deletePreset))
+        _ = label("App group", frame: NSRect(x: 20, y: 229, width: 100, height: 22))
+        groupPopup.frame = NSRect(x: 122, y: 223, width: 210, height: 28)
+        groupPopup.target = self; groupPopup.action = #selector(selectGroup)
+        formContainer?.addSubview(groupPopup)
+        addCompactButton("New", x: 338, y: 223, width: 58, action: #selector(newGroup))
+        addCompactButton("Rename", x: 398, y: 223, width: 72, action: #selector(renameGroup))
+        addCompactButton("Delete", x: 472, y: 223, width: 68, action: #selector(deleteGroup))
+        _ = label("Automatic tint", frame: NSRect(x: 20, y: 170, width: 100, height: 22))
+        tintSchedulePopup.frame = NSRect(x: 122, y: 164, width: 210, height: 28)
+        tintSchedulePopup.addItems(withTitles: MosaicTintSchedule.Mode.allCases.map(\.title))
+        tintSchedulePopup.target = self; tintSchedulePopup.action = #selector(scheduleChanged)
+        formContainer?.addSubview(tintSchedulePopup)
+        _ = label("Day tint", frame: NSRect(x: 20, y: 112, width: 100, height: 22))
+        dayTintColor.frame = NSRect(x: 122, y: 104, width: 62, height: 34)
+        dayTintColor.colorWellStyle = .expanded; dayTintColor.supportsAlpha = false
+        dayTintColor.target = self; dayTintColor.action = #selector(scheduleChanged)
+        dayTintColor.setAccessibilityLabel("Day tint")
+        formContainer?.addSubview(dayTintColor)
+        _ = label("Night tint", frame: NSRect(x: 214, y: 112, width: 100, height: 22))
+        nightTintColor.frame = NSRect(x: 306, y: 104, width: 62, height: 34)
+        nightTintColor.colorWellStyle = .expanded; nightTintColor.supportsAlpha = false
+        nightTintColor.target = self; nightTintColor.action = #selector(scheduleChanged)
+        nightTintColor.setAccessibilityLabel("Night tint")
+        formContainer?.addSubview(nightTintColor)
+        addCompactButton("Schedule & Location…", x: 20, y: 45, width: 176, action: #selector(showSchedule))
+        scheduleSummary.frame = NSRect(x: 207, y: 51, width: 333, height: 36)
+        scheduleSummary.font = .systemFont(ofSize: 11); scheduleSummary.textColor = .secondaryLabelColor
+        scheduleSummary.maximumNumberOfLines = 2; scheduleSummary.lineBreakMode = .byWordWrapping
+        formContainer?.addSubview(scheduleSummary)
         formContainer = nil
         let choose = NSButton(title: "Choose Apps…", target: self, action: #selector(showChooser))
         choose.bezelStyle = .rounded; choose.frame = NSRect(x: 22, y: 71, width: 145, height: 32)
@@ -100,6 +166,12 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
         let save = NSButton(title: "Done", target: self, action: #selector(save))
         save.bezelStyle = .rounded; save.frame = NSRect(x: 523, y: 13, width: 89, height: 32); save.keyEquivalent = "\r"
         for button in [restore, cancel, save] { window.contentView?.addSubview(button) }
+    }
+    private func addCompactButton(_ title: String, x: CGFloat, y: CGFloat, width: CGFloat, action: Selector) {
+        let button = NSButton(title: title, target: self, action: action)
+        button.bezelStyle = .rounded; button.controlSize = .small
+        button.frame = NSRect(x: x, y: y, width: width, height: 28)
+        formContainer?.addSubview(button)
     }
     private func addSlider(_ key: String, title: String, y: CGFloat, range: ClosedRange<Double>, low: String, high: String) {
         _ = label(title, frame: NSRect(x: 20, y: y + 4, width: 165, height: 22))
@@ -130,9 +202,11 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
             if abs(draft.tintGreen - Double(color.greenComponent)) > 0.000001 { draft.tintGreen = Double(color.greenComponent) }
             if abs(draft.tintBlue - Double(color.blueComponent)) > 0.000001 { draft.tintBlue = Double(color.blueComponent) }
         }
+        commitSettingsToPreset()
         updateValues()
     }
     private func refresh() {
+        reloadPresetMenus()
         let fields: [String: Double] = ["iconSize": draft.iconSize, "spacing": draft.spacing, "edgeMargin": draft.edgeMargin,
             "edgeFade": draft.edgeFade, "frequency": draft.frequency, "fadeDuration": draft.fadeDuration,
             "scrollSpeed": draft.scrollSpeed, "tintStrength": draft.tintStrength]
@@ -141,6 +215,16 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
         screenEdges.selectItem(at: draft.screenEdges.rawValue)
         colorMode.selectItem(at: draft.colorMode.rawValue)
         tintColor.color = NSColor(srgbRed: draft.tintRed, green: draft.tintGreen, blue: draft.tintBlue, alpha: 1)
+        if let preset = currentPreset {
+            tintSchedulePopup.selectItem(at: MosaicTintSchedule.Mode.allCases.firstIndex(of: preset.tintSchedule.mode) ?? 0)
+            dayTintColor.color = NSColor(srgbRed: preset.tintSchedule.dayColor.red,
+                                         green: preset.tintSchedule.dayColor.green,
+                                         blue: preset.tintSchedule.dayColor.blue, alpha: 1)
+            nightTintColor.color = NSColor(srgbRed: preset.tintSchedule.nightColor.red,
+                                           green: preset.tintSchedule.nightColor.green,
+                                           blue: preset.tintSchedule.nightColor.blue, alpha: 1)
+            updateScheduleSummary(preset.tintSchedule)
+        }
         updateValues()
     }
     private func updateValues() {
@@ -161,16 +245,208 @@ final class MosaicOptionsController: NSObject, NSTableViewDataSource, NSTableVie
         summaryExclusions = draft.excludedApps
         let selected = apps.lazy.filter { !self.draft.excludedApps.contains($0.id) }.count
         appSummary.stringValue = apps.isEmpty ? "No apps found in standard Applications folders." : "\(selected) of \(apps.count) apps included"
-        selectionSummary.stringValue = "\(selected) included · New apps are included automatically"
+        let newApps = currentGroupIndex.flatMap { draftLibrary.groups[$0].rule } == .only
+            ? "New apps remain excluded"
+            : "New apps are included automatically"
+        selectionSummary.stringValue = "\(selected) included · \(newApps)"
     }
-    @objc func restoreDefaults() { draft = .defaults; refresh(); table.reloadData() }
-    @objc func save() { changed(); onSave(draft); dismiss(.OK) }
+    @objc func restoreDefaults() {
+        draft = .defaults
+        if let index = currentPresetIndex { draftLibrary.presets[index].tintSchedule = MosaicTintSchedule() }
+        if let index = currentGroupIndex {
+            draftLibrary.groups[index].rule = .allExcept
+            draftLibrary.groups[index].appIDs = []
+        }
+        commitSettingsToPreset(); summaryExclusions = nil; refresh(); table.reloadData()
+    }
+    @objc func save() {
+        changed(); commitSelectionToGroup()
+        draftLibrary.selectedPresetID = currentPreset?.id ?? draftLibrary.selectedPresetID
+        draftLibrary.normalize(fallback: draft)
+        onSave(draftLibrary); dismiss(.OK)
+    }
     @objc func cancel() { dismiss(.cancel) }
     private func dismiss(_ result: NSApplication.ModalResponse) {
         if let parent = window.sheetParent { parent.endSheet(window, returnCode: result) }
         else { window.orderOut(nil) }
     }
-    func updateApps(_ apps: [InstalledApp]) { self.apps = apps; summaryExclusions = nil; refilter(); table.reloadData(); updateValues() }
+    func updateApps(_ apps: [InstalledApp]) {
+        commitSelectionToGroup()
+        self.apps = apps
+        refilter()
+        loadCurrentPreset()
+    }
+
+    private var currentPresetIndex: Int? {
+        draftLibrary.presets.firstIndex { $0.id == draftLibrary.selectedPresetID }
+    }
+    private var currentPreset: MosaicPreset? { currentPresetIndex.map { draftLibrary.presets[$0] } }
+    private var currentGroupIndex: Int? {
+        guard let groupID = currentPreset?.appGroupID else { return nil }
+        return draftLibrary.groups.firstIndex { $0.id == groupID }
+    }
+
+    private func commitSettingsToPreset() {
+        guard let index = currentPresetIndex else { return }
+        draftLibrary.presets[index].settings = draft
+    }
+    private func commitSelectionToGroup() {
+        guard let index = currentGroupIndex else { return }
+        draftLibrary.groups[index].setExcludedApps(draft.excludedApps, allAppIDs: Set(apps.map(\.id)))
+        commitSettingsToPreset()
+    }
+    private func loadCurrentPreset() {
+        guard let preset = currentPreset else { return }
+        draft = preset.settings
+        if let group = draftLibrary.groups.first(where: { $0.id == preset.appGroupID }) {
+            draft.excludedApps = group.excludedApps(from: Set(apps.map(\.id)))
+        }
+        summaryExclusions = nil
+        refresh(); table.reloadData()
+    }
+    private func reloadPresetMenus() {
+        presetPopup.removeAllItems()
+        for preset in draftLibrary.presets {
+            presetPopup.addItem(withTitle: preset.name)
+            presetPopup.lastItem?.representedObject = preset.id
+        }
+        if let index = draftLibrary.presets.firstIndex(where: { $0.id == draftLibrary.selectedPresetID }) {
+            presetPopup.selectItem(at: index)
+        }
+        groupPopup.removeAllItems()
+        for group in draftLibrary.groups {
+            groupPopup.addItem(withTitle: group.name)
+            groupPopup.lastItem?.representedObject = group.id
+        }
+        if let groupID = currentPreset?.appGroupID,
+           let index = draftLibrary.groups.firstIndex(where: { $0.id == groupID }) { groupPopup.selectItem(at: index) }
+    }
+
+    @objc private func selectPreset() {
+        guard let id = presetPopup.selectedItem?.representedObject as? String else { return }
+        commitSelectionToGroup()
+        draftLibrary.selectedPresetID = id
+        loadCurrentPreset()
+    }
+    @objc private func selectGroup() {
+        guard let id = groupPopup.selectedItem?.representedObject as? String,
+              let presetIndex = currentPresetIndex else { return }
+        commitSelectionToGroup()
+        draftLibrary.presets[presetIndex].appGroupID = id
+        loadCurrentPreset()
+    }
+
+    func createPreset(named name: String) {
+        let name = uniqueName(name, existing: draftLibrary.presets.map(\.name))
+        commitSelectionToGroup()
+        let preset = MosaicPreset(id: UUID().uuidString, name: name, settings: draft,
+                                  appGroupID: currentPreset?.appGroupID ?? draftLibrary.groups[0].id,
+                                  tintSchedule: currentPreset?.tintSchedule ?? MosaicTintSchedule())
+        draftLibrary.presets.append(preset); draftLibrary.selectedPresetID = preset.id
+        loadCurrentPreset()
+    }
+    func createGroup(named name: String) {
+        let name = uniqueName(name, existing: draftLibrary.groups.map(\.name))
+        commitSelectionToGroup()
+        let included = Set(apps.map(\.id)).subtracting(draft.excludedApps)
+        let group = MosaicAppGroup(id: UUID().uuidString, name: name, rule: .only, appIDs: included)
+        draftLibrary.groups.append(group)
+        if let index = currentPresetIndex { draftLibrary.presets[index].appGroupID = group.id }
+        loadCurrentPreset()
+    }
+    private func uniqueName(_ proposed: String, existing: [String]) -> String {
+        let base = proposed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : proposed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard existing.contains(base) else { return base }
+        var number = 2
+        while existing.contains("\(base) \(number)") { number += 1 }
+        return "\(base) \(number)"
+    }
+    private func requestName(title: String, current: String? = nil, completion: @escaping (String) -> Void) {
+        let alert = NSAlert(); alert.messageText = title
+        let field = NSTextField(string: current ?? "")
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24); alert.accessoryView = field
+        alert.addButton(withTitle: "Save"); alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            completion(field.stringValue)
+        }
+    }
+    @objc private func newPreset() { requestName(title: "New Preset", current: "Preset") { [weak self] in self?.createPreset(named: $0) } }
+    @objc private func renamePreset() {
+        guard let index = currentPresetIndex else { return }
+        requestName(title: "Rename Preset", current: draftLibrary.presets[index].name) { [weak self] name in
+            guard let self, let index = self.currentPresetIndex else { return }
+            self.draftLibrary.presets[index].name = self.uniqueName(name, existing: self.draftLibrary.presets.enumerated().filter { $0.offset != index }.map { $0.element.name })
+            self.reloadPresetMenus()
+        }
+    }
+    @objc private func deletePreset() {
+        guard draftLibrary.presets.count > 1, let index = currentPresetIndex else { return }
+        draftLibrary.presets.remove(at: index)
+        draftLibrary.selectedPresetID = draftLibrary.presets[max(0, index - 1)].id
+        loadCurrentPreset()
+    }
+    @objc private func newGroup() { requestName(title: "New App Group", current: "App Group") { [weak self] in self?.createGroup(named: $0) } }
+    @objc private func renameGroup() {
+        guard let index = currentGroupIndex else { return }
+        requestName(title: "Rename App Group", current: draftLibrary.groups[index].name) { [weak self] name in
+            guard let self, let index = self.currentGroupIndex else { return }
+            self.draftLibrary.groups[index].name = self.uniqueName(name, existing: self.draftLibrary.groups.enumerated().filter { $0.offset != index }.map { $0.element.name })
+            self.reloadPresetMenus()
+        }
+    }
+    @objc private func deleteGroup() {
+        guard draftLibrary.groups.count > 1, let index = currentGroupIndex else { return }
+        let removedID = draftLibrary.groups[index].id
+        draftLibrary.groups.remove(at: index)
+        let replacement = draftLibrary.groups[max(0, index - 1)].id
+        for presetIndex in draftLibrary.presets.indices where draftLibrary.presets[presetIndex].appGroupID == removedID {
+            draftLibrary.presets[presetIndex].appGroupID = replacement
+        }
+        loadCurrentPreset()
+    }
+
+    @objc private func scheduleChanged() {
+        guard let index = currentPresetIndex else { return }
+        var schedule = draftLibrary.presets[index].tintSchedule
+        schedule.mode = MosaicTintSchedule.Mode.allCases[tintSchedulePopup.indexOfSelectedItem]
+        if let color = dayTintColor.color.usingColorSpace(.sRGB) {
+            schedule.dayColor = MosaicRGB(red: Double(color.redComponent), green: Double(color.greenComponent), blue: Double(color.blueComponent))
+        }
+        if let color = nightTintColor.color.usingColorSpace(.sRGB) {
+            schedule.nightColor = MosaicRGB(red: Double(color.redComponent), green: Double(color.greenComponent), blue: Double(color.blueComponent))
+        }
+        draftLibrary.presets[index].tintSchedule = schedule
+        updateScheduleSummary(schedule)
+    }
+    @objc private func showSchedule() {
+        guard let index = currentPresetIndex else { return }
+        let controller = MosaicScheduleController(schedule: draftLibrary.presets[index].tintSchedule) { [weak self] schedule in
+            guard let self, let index = self.currentPresetIndex else { return }
+            self.draftLibrary.presets[index].tintSchedule = schedule
+            self.refresh()
+        }
+        scheduleController = controller
+        window.beginSheet(controller.window)
+    }
+    private func updateScheduleSummary(_ schedule: MosaicTintSchedule) {
+        switch schedule.mode {
+        case .off: scheduleSummary.stringValue = "Presets can also be selected from Focus settings."
+        case .timeOfDay:
+            scheduleSummary.stringValue = "Day at \(Self.timeString(schedule.dayStartMinutes)); night at \(Self.timeString(schedule.nightStartMinutes))."
+        case .sunriseSunset:
+            if let latitude = schedule.latitude, let longitude = schedule.longitude {
+                let place = schedule.locationName.isEmpty ? String(format: "%.3f, %.3f", latitude, longitude) : schedule.locationName
+                scheduleSummary.stringValue = "Uses sunrise and sunset near \(place)."
+            } else { scheduleSummary.stringValue = "Add a location to use sunrise and sunset." }
+        }
+    }
+    private static func timeString(_ minutes: Int) -> String {
+        let formatter = DateFormatter(); formatter.timeStyle = .short; formatter.dateStyle = .none
+        let calendar = Calendar.current
+        let date = calendar.date(from: DateComponents(hour: minutes / 60, minute: minutes % 60)) ?? Date()
+        return formatter.string(from: date)
+    }
 
     @objc func showChooser() {
         if chooser == nil { buildChooser() }

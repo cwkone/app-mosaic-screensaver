@@ -7,6 +7,7 @@ final class AppMosaicView: ScreenSaverView {
     static let settingsID = "one.cwk.AppMosaic"
     private let store = ScreenSaverDefaults(forModuleWithName: settingsID)!
     private var settings = MosaicSettings.defaults
+    private var library = MosaicPresetLibrary.initial(settings: .defaults)
     private var apps: [InstalledApp] = []
     private var loaded = false
     private var loading = false
@@ -15,6 +16,7 @@ final class AppMosaicView: ScreenSaverView {
     private var sleeping = false
     private var rebuildPending = false
     private var options: MosaicOptionsController?
+    private var automationTimer: Timer?
     private let renderer = MosaicRenderer()
     private var distributedObservers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
@@ -26,7 +28,7 @@ final class AppMosaicView: ScreenSaverView {
         ["cells": renderer.cellCount, "ready": renderer.readyCount, "events": renderer.eventCount,
          "rebuilds": renderer.rebuildCount, "decodes": MosaicArtworkCache.shared.decodes,
          "requests": MosaicArtworkCache.shared.requests, "normalizations": MosaicArtworkCache.shared.normalizations, "activeSwaps": renderer.activeSwapCount,
-         "running": renderer.running]
+         "running": renderer.running, "preset": activePreset?.name ?? ""]
     }
     var discoveredApps: [InstalledApp] { apps }
 
@@ -37,13 +39,20 @@ final class AppMosaicView: ScreenSaverView {
     private func initialize() {
         // The host can call animateOneFrame, but the compositor owns animation.
         animationTimeInterval = 1
-        settings = MosaicSettings(store: store)
+        reloadConfiguration()
         layer = renderer.root
         wantsLayer = true
         for name in ["com.apple.screensaver.willstop", "com.apple.screensaver.didstop"] {
             distributedObservers.append(DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in self?.stopAnimation() })
         }
+        distributedObservers.append(DistributedNotificationCenter.default().addObserver(
+            forName: MosaicPresetLibrary.changedNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.reloadConfiguration()
+            if self.window != nil, !self.sleeping { self.rebuild() }
+        })
         let center = NSWorkspace.shared.notificationCenter
         workspaceObservers.append(center.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
             self?.sleeping = true; self?.renderer.stop()
@@ -66,6 +75,7 @@ final class AppMosaicView: ScreenSaverView {
             let changed = !self.loaded || self.apps != apps
             self.apps = apps; self.loaded = true; self.loading = false
             self.options?.updateApps(apps)
+            self.resolveSettings()
             if changed, self.window != nil, !self.sleeping { self.rebuild() }
             os_log("Discovered %d apps", log: self.log, type: .info, apps.count)
         }
@@ -106,13 +116,14 @@ final class AppMosaicView: ScreenSaverView {
     }
     override func startAnimation() {
         running = true; renderAllowed = true
-        store.synchronize(); settings = MosaicSettings(store: store)
+        reloadConfiguration()
         super.startAnimation()
         rebuild(); discover()
         os_log("Layer animation started", log: log, type: .info)
     }
     override func stopAnimation() {
         running = false; renderAllowed = false
+        automationTimer?.invalidate(); automationTimer = nil
         renderer.stop()
         super.stopAnimation()
         os_log("Layer animation stopped", log: log, type: .info)
@@ -121,9 +132,16 @@ final class AppMosaicView: ScreenSaverView {
     override var hasConfigureSheet: Bool { true }
     override var configureSheet: NSWindow? {
         store.synchronize()
-        let controller = MosaicOptionsController(settings: MosaicSettings(store: store), apps: apps) { [weak self] settings in
+        library = MosaicPresetLibrary.load(from: store, fallback: MosaicSettings(store: store))
+        let controller = MosaicOptionsController(library: library, apps: apps) { [weak self] library in
             guard let self else { return }
-            settings.save(to: self.store); self.settings = settings; self.rebuild()
+            self.library = library
+            library.save(to: self.store)
+            let resolved = library.resolvedSettings(in: self.store, appIDs: Set(self.apps.map(\.id)))
+            resolved.save(to: self.store)
+            self.settings = resolved
+            self.scheduleAutomationTimer()
+            self.rebuild()
         }
         options = controller
         return controller.window
@@ -131,4 +149,30 @@ final class AppMosaicView: ScreenSaverView {
     func snapshot() -> NSBitmapImageRep? { renderer.snapshot() }
     /// Preview configurations without saving or changing the user's exclusions.
     func preview(_ settings: MosaicSettings) { self.settings = settings; rebuild() }
+
+    private var activePreset: MosaicPreset? {
+        let id = library.activePresetID(in: store)
+        return library.presets.first { $0.id == id }
+    }
+    private func reloadConfiguration() {
+        store.synchronize()
+        library = MosaicPresetLibrary.load(from: store, fallback: MosaicSettings(store: store))
+        resolveSettings()
+    }
+    private func resolveSettings(at date: Date = Date()) {
+        settings = library.resolvedSettings(in: store, appIDs: Set(apps.map(\.id)), at: date)
+        scheduleAutomationTimer()
+    }
+    private func scheduleAutomationTimer() {
+        automationTimer?.invalidate(); automationTimer = nil
+        guard running, activePreset?.tintSchedule.mode != .off else { return }
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let previous = self.settings
+            self.settings = self.library.resolvedSettings(in: self.store, appIDs: Set(self.apps.map(\.id)))
+            if self.settings != previous, self.window != nil, !self.sleeping { self.rebuild() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        automationTimer = timer
+    }
 }
