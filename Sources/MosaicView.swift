@@ -13,6 +13,7 @@ final class AppMosaicView: ScreenSaverView {
     private var running = false
     private var renderAllowed = true
     private var sleeping = false
+    private var rebuildPending = false
     private var options: MosaicOptionsController?
     private let renderer = MosaicRenderer()
     private var distributedObservers: [NSObjectProtocol] = []
@@ -20,11 +21,11 @@ final class AppMosaicView: ScreenSaverView {
     private let log = OSLog(subsystem: settingsID, category: "screensaver")
     @objc var catalogReady: Bool { loaded }
     @objc var discoveredAppCount: Int { apps.count }
-    @objc var artworkReady: Bool { loaded && renderer.readyCount == renderer.cellCount }
+    @objc var artworkReady: Bool { loaded && !rebuildPending && renderer.readyCount == renderer.cellCount }
     @objc var renderingDiagnostics: NSDictionary {
         ["cells": renderer.cellCount, "ready": renderer.readyCount, "events": renderer.eventCount,
          "rebuilds": renderer.rebuildCount, "decodes": MosaicArtworkCache.shared.decodes,
-         "requests": MosaicArtworkCache.shared.requests, "activeSwaps": renderer.activeSwapCount,
+         "requests": MosaicArtworkCache.shared.requests, "normalizations": MosaicArtworkCache.shared.normalizations, "activeSwaps": renderer.activeSwapCount,
          "running": renderer.running]
     }
     var discoveredApps: [InstalledApp] { apps }
@@ -70,6 +71,15 @@ final class AppMosaicView: ScreenSaverView {
         }
     }
     private func rebuild() {
+        guard !rebuildPending else { return }
+        rebuildPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.rebuildPending = false
+            self.performRebuild()
+        }
+    }
+    private func performRebuild() {
         guard window != nil, !sleeping, renderAllowed else { return }
         let included = apps.filter { !settings.excludedApps.contains($0.id) }
         let miniature = isPreview || bounds.width < 600

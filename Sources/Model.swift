@@ -91,11 +91,23 @@ struct AppRotation {
         guard !pool.isEmpty else { return nil }
         if remaining.isEmpty { remaining = pool.shuffled() }
         if let index = remaining.firstIndex(where: { !visible.contains($0) && $0 != current }) {
-            return remaining.remove(at: index)
+            remaining.swapAt(index, remaining.count - 1)
+            return remaining.removeLast()
         }
-        let candidates = pool.filter { !visible.contains($0) && $0 != current }
-        if let next = candidates.randomElement() { return next }
-        return pool.filter { $0 != current }.randomElement() ?? pool.first
+        // Reservoir sampling keeps fallback selection uniform without allocating
+        // temporary arrays when the grid is larger than the installed collection.
+        func choose(_ eligible: (String) -> Bool) -> String? {
+            var result: String?, count = 0
+            for app in pool where eligible(app) {
+                count += 1
+                if Int.random(in: 0..<count) == 0 { result = app }
+            }
+            return result
+        }
+        if let next = choose({ !visible.contains($0) && $0 != current }) { return next }
+        guard pool.count > 1, let current, let index = pool.firstIndex(of: current) else { return pool.randomElement() }
+        let choice = Int.random(in: 0..<(pool.count - 1))
+        return pool[choice >= index ? choice + 1 : choice]
     }
 }
 

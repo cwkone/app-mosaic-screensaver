@@ -46,6 +46,33 @@ import AppKit
         let transparent = MosaicImageProcessing.image([UInt8](repeating: 0, count: size * size * 4), size: size)!
         check(MosaicImageProcessing.prepare(transparent, pixels: 64, settings: .defaults) != nil)
         let token = MosaicWorkToken(); check(!token.isCancelled); token.cancel(); check(token.isCancelled)
-        print("PASS: transparent padding, alpha preservation, monochrome, tint hue/strength, empty images, work cancellation")
+        let cache = MosaicArtworkCache()
+        var app = InstalledApp(id: "finder", name: "Finder", url: URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app"))
+        func request(_ settings: MosaicSettings, pixels: Int = 64) {
+            var done = false
+            cache.request(app: app, pixels: pixels, settings: settings, token: MosaicWorkToken()) { image in
+                check(image != nil); done = true
+            }
+            let deadline = Date().addingTimeInterval(20)
+            while !done && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+            check(done, "cache completion timeout")
+        }
+        request(.defaults)
+        check(cache.normalizations == 1)
+        config.colorMode = .monochrome; request(config)
+        config.colorMode = .tinted; request(config)
+        check(cache.normalizations == 1, "palette variants must share uncolored pixels")
+        request(.defaults, pixels: 128)
+        check(cache.normalizations == 2, "preserve size-specific artwork representations")
+        app.modifiedAt = Date(timeIntervalSince1970: 1234)
+        request(.defaults)
+        check(cache.normalizations == 3, "updated applications must invalidate artwork")
+        let cancelled = MosaicWorkToken(); cancelled.cancel()
+        let previous = cache.requests
+        cache.request(app: app, pixels: 64, settings: .defaults, token: cancelled) { _ in
+            fatalError("cancelled request was delivered")
+        }
+        check(cache.requests == previous)
+        print("PASS: transparent padding, alpha preservation, monochrome, tint hue/strength, empty images, work cancellation, palette reuse, size fidelity, app-update invalidation")
     }
 }
