@@ -69,8 +69,8 @@ cat > "$SAVER/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>AppMosaic</string>
 <key>CFBundleIconFile</key><string>AppMosaic.icns</string>
 <key>CFBundlePackageType</key><string>BNDL</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>1.1.0</string>
 <key>NSPrincipalClass</key><string>AppMosaicView</string>
 <key>LSMinimumSystemVersion</key><string>14.6</string>
 <key>NSHighResolutionCapable</key><true/>
@@ -86,8 +86,8 @@ cat > "$PREVIEW/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>AppMosaicPreview</string>
 <key>CFBundleIconFile</key><string>AppMosaic.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>1.1.0</string>
 <key>LSMinimumSystemVersion</key><string>14.6</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSLocationWhenInUseUsageDescription</key><string>App Mosaic uses an approximate location to calculate local sunrise and sunset for tint schedules.</string>
@@ -102,8 +102,8 @@ cat > "$FOCUS_EXTENSION/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>App Mosaic</string>
 <key>CFBundleExecutable</key><string>AppMosaicFocusIntents</string>
 <key>CFBundlePackageType</key><string>XPC!</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>1.1.0</string>
 <key>LSMinimumSystemVersion</key><string>14.6</string>
 <key>CFBundleSupportedPlatforms</key><array><string>MacOSX</string></array>
 <key>EXAppExtensionAttributes</key><dict><key>EXExtensionPointIdentifier</key><string>com.apple.appintents-extension</string></dict>
