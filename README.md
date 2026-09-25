@@ -4,7 +4,9 @@
 
 A native macOS screensaver that fills the screen with installed app icons, staggered fades, and optional continuous scrolling. App Mosaic 1.0 uses cached Core Animation layers and a tighter grid inspired by Apple's keynote app walls.
 
-![App Mosaic default grid](Resources/Artwork/ScreenSaverPreview.png)
+![App Mosaic preview grid with 45 selected macOS apps](Resources/Artwork/ScreenSaverPreview.png)
+
+Preview capture with a curated selection of installed apps and **Keep whole icons** enabled.
 
 ## Use it
 
